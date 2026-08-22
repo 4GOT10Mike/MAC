@@ -26,7 +26,17 @@ description: "casual, slightly bold, a little rounded"
 # round_joins: true        # rounded vs sharp corners on generated strokes
 # letter_spacing: 40       # extra side bearing added to every glyph
 # weight_delta: 0          # grow(+)/shrink(-) traced glyphs, in font units
-# uppercase_from_lowercase: true   # A-Z reuse the a-z shapes (recommended for casual/handwriting fonts)
+# uppercase_from_lowercase: true   # A-Z reuse the a-z shapes when no other source has them
+
+# --- Optional: base an existing font's letterforms instead of generating from scratch ---
+# Any character without a reference image in refs/ is sourced from this font
+# (including real A-Z capitals, if it has them) before falling back to a
+# generated letterform. Then puffiness/roughness restyle those shapes --
+# e.g. to turn a clean blackletter font into a puffy, hand-cut looking one.
+# base_font: "path/to/SomeFont.ttf"
+# puffiness: 0             # outward round expand, in font units -- makes strokes chunkier/bubblier
+# roughness: 0              # organic edge noise amplitude, in font units -- uneven/hand-cut look
+# roughness_wavelength: 70  # spacing of the roughness texture, in font units
 """
 
 REFS_README = """\
@@ -85,14 +95,20 @@ def cmd_build(args: argparse.Namespace) -> None:
     compile_ttf(font, out_path)
 
     traced = sorted(report["traced"])
+    base_font = sorted(set(report["base_font"]))
     generated = sorted(set(report["generated"]))
+    duplicated = sorted(report["duplicated"])
     fallback = sorted(report["fallback"])
 
     print(f"\nBuilt {out_path}  ({cfg.family_name} {cfg.style_name})")
-    print(f"  Traced from your images  ({len(traced):2d}/36): {' '.join(traced) or '-'}")
-    print(f"  Generated from style     ({len(generated):2d}/36): {' '.join(generated) or '-'}")
+    print(f"  Traced from your images  ({len(traced):2d}): {' '.join(traced) or '-'}")
+    if cfg.base_font:
+        print(f"  From base font           ({len(base_font):2d}): {' '.join(base_font) or '-'}")
+    print(f"  Generated from style     ({len(generated):2d}): {' '.join(generated) or '-'}")
+    if duplicated:
+        print(f"  A-Z duplicated from a-z  ({len(duplicated):2d}): {' '.join(duplicated)}")
     if fallback:
-        print(f"  Tracing failed, used generated instead: {' '.join(fallback)}")
+        print(f"  A source failed, used a fallback instead: {' '.join(fallback)}")
     print("\nInstall on macOS: double-click the .ttf file, then click 'Install Font' in Font Book")
     print(f"(or: open '{out_path}' from Finder).")
 

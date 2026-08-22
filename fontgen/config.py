@@ -43,6 +43,15 @@ _KEYWORDS = {
     "expanded": dict(letter_spacing=95.0),
     "airy": dict(letter_spacing=85.0),
     "loose": dict(letter_spacing=80.0),
+    "puffy": dict(puffiness=22.0),
+    "inflated": dict(puffiness=26.0),
+    "bubble": dict(puffiness=26.0),
+    "rough": dict(roughness=14.0),
+    "worn": dict(roughness=16.0),
+    "weathered": dict(roughness=16.0),
+    "distressed": dict(roughness=18.0, puffiness=14.0),
+    "gritty": dict(roughness=16.0),
+    "jagged": dict(roughness=20.0, roughness_wavelength=40.0),
 }
 
 
@@ -59,6 +68,15 @@ class FontConfig:
     letter_spacing: float = 40.0
     uppercase_from_lowercase: bool = True
     version: str = "1.0"
+
+    # Optional: source glyph shapes from an existing font file (e.g. a
+    # blackletter TTF) instead of a procedural skeleton, for any character
+    # not covered by a reference image. See fontgen/basefont.py.
+    base_font: str = ""
+    puffiness: float = 0.0
+    roughness: float = 0.0
+    roughness_wavelength: float = 70.0
+    roughness_seed: int = 1
 
     @classmethod
     def load(cls, path: str | Path) -> "FontConfig":

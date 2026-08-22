@@ -15,6 +15,7 @@ Two kinds of glyph source flow through here:
 from __future__ import annotations
 
 import math
+import random
 from typing import Iterable, List, Sequence, Tuple
 
 from shapely.affinity import affine_transform
@@ -101,3 +102,100 @@ def translate(geom, dx: float, dy: float):
 def scale(geom, sx: float, sy: float, origin: Point = (0, 0)):
     ox, oy = origin
     return affine_transform(geom, [sx, 0, 0, sy, ox - sx * ox, oy - sy * oy])
+
+
+def _densify_ring(coords: Polyline, max_seg_len: float) -> Polyline:
+    pts: Polyline = []
+    n = len(coords)
+    for i in range(n):
+        p0, p1 = coords[i], coords[(i + 1) % n]
+        pts.append(p0)
+        seg_len = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        steps = max(1, int(seg_len // max_seg_len))
+        for s in range(1, steps):
+            t = s / steps
+            pts.append((p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t))
+    return pts
+
+
+def _chaikin_smooth(coords: Polyline, iterations: int = 3, ratio: float = 0.25) -> Polyline:
+    """Corner-cutting smoothing on a closed ring: rounds sharp zigzags into
+    soft bumps without changing the overall wave shape."""
+    pts = coords
+    for _ in range(iterations):
+        n = len(pts)
+        new_pts: Polyline = []
+        for i in range(n):
+            p0, p1 = pts[i], pts[(i + 1) % n]
+            new_pts.append((p0[0] + (p1[0] - p0[0]) * ratio, p0[1] + (p1[1] - p0[1]) * ratio))
+            new_pts.append((p0[0] + (p1[0] - p0[0]) * (1 - ratio), p0[1] + (p1[1] - p0[1]) * (1 - ratio)))
+        pts = new_pts
+    return pts
+
+
+def _roughen_ring(coords: Polyline, amplitude: float, wavelength: float, seed: int) -> Polyline:
+    if coords and coords[0] == coords[-1]:
+        coords = coords[:-1]
+    if len(coords) < 3:
+        return coords
+
+    xs = [p[0] for p in coords]
+    ys = [p[1] for p in coords]
+    diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    amp = min(amplitude, diag * 0.15)  # never let noise be big enough to collapse a small ring (dots, counters)
+    if amp <= 0:
+        return coords
+
+    dense = _densify_ring(coords, max(wavelength / 4.0, 3.0))
+    n = len(dense)
+    rng = random.Random(seed)
+    terms = [(rng.uniform(0.6, 1.6), rng.uniform(0, 2 * math.pi), rng.uniform(0.5, 1.0)) for _ in range(3)]
+    weight_sum = sum(w for _, _, w in terms)
+
+    arclen = [0.0]
+    for i in range(1, n):
+        arclen.append(arclen[-1] + math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]))
+
+    out: Polyline = []
+    for i, (x, y) in enumerate(dense):
+        x0, y0 = dense[(i - 1) % n]
+        x1, y1 = dense[(i + 1) % n]
+        tx, ty = x1 - x0, y1 - y0
+        tl = math.hypot(tx, ty) or 1.0
+        nx, ny = ty / tl, -tx / tl
+        s = arclen[i] / wavelength
+        noise = sum(w * math.sin(2 * math.pi * freq * s + phase) for freq, phase, w in terms) / weight_sum
+        offset = amp * noise
+        out.append((x + nx * offset, y + ny * offset))
+    return _chaikin_smooth(out)
+
+
+def roughen(geom, amplitude: float, wavelength: float = 70.0, seed: int = 1):
+    """Perturb a filled shape's contours with smooth, organic noise along
+    their own normal direction -- an uneven, hand-cut/worn edge instead of a
+    clean geometric one. `wavelength` is roughly the spacing (in font units)
+    of the bumps; `amplitude` is roughly how far they push in/out."""
+    if amplitude == 0 or geom.is_empty:
+        return geom
+
+    polys = list(geom.geoms) if isinstance(geom, MultiPolygon) else [geom]
+    out = []
+    for gi, poly in enumerate(polys):
+        rings = [poly.exterior, *poly.interiors]
+        new_rings = [_roughen_ring(list(r.coords), amplitude, wavelength, seed + gi * 1000 + ri) for ri, r in enumerate(rings)]
+        try:
+            p = Polygon(new_rings[0], new_rings[1:])
+            if not p.is_valid:
+                p = p.buffer(0)
+        except Exception:
+            p = poly
+        if p.is_empty:
+            continue
+        pieces = list(p.geoms) if isinstance(p, MultiPolygon) else [p]
+        # drop stray slivers self-intersection cleanup can leave behind, without risking real
+        # small features (e.g. a dot) -- those are orders of magnitude bigger than this.
+        out.extend(piece for piece in pieces if piece.area >= 25.0)
+
+    if not out:
+        return geom
+    return out[0] if len(out) == 1 else unary_union(out)

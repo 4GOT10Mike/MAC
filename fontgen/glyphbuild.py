@@ -11,8 +11,9 @@ from shapely.affinity import affine_transform
 from shapely.geometry.base import BaseGeometry
 
 from . import skeletons
+from .basefont import BaseFont
 from .config import FontConfig
-from .geometry import grow, scale, slant, stroke_polylines, translate
+from .geometry import grow, roughen, scale, slant, stroke_polylines, translate
 from .trace import trace_image
 
 
@@ -24,6 +25,28 @@ def build_skeleton_glyph(char: str, cfg: FontConfig) -> Tuple[BaseGeometry, floa
     minx, miny, maxx, maxy = shape.bounds
     shape = translate(shape, cfg.letter_spacing - minx, 0)
     advance = (maxx - minx) + 2 * cfg.letter_spacing
+    return shape, advance
+
+
+def build_basefont_glyph(char: str, base_font: BaseFont, cfg: FontConfig) -> Tuple[BaseGeometry, float]:
+    shape, width = base_font.get_shape(char)
+    if shape is None or shape.is_empty:
+        raise ValueError(f"'{char}' has no glyph (or an empty outline) in the base font {cfg.base_font!r}.")
+
+    factor = cfg.units_per_em / base_font.units_per_em
+    if factor != 1.0:
+        shape = scale(shape, factor, factor, origin=(0, 0))
+        width *= factor
+
+    if cfg.puffiness:
+        shape = grow(shape, cfg.puffiness)
+    if cfg.roughness:
+        shape = roughen(shape, cfg.roughness, cfg.roughness_wavelength, seed=cfg.roughness_seed + ord(char))
+    if cfg.slant:
+        shape = slant(shape, cfg.slant, base_y=0)
+
+    shape = translate(shape, cfg.letter_spacing, 0)
+    advance = width + 2 * cfg.letter_spacing
     return shape, advance
 
 

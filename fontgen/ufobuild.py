@@ -1,11 +1,13 @@
-"""Assembles a full UFO font source: one glyph per a-z / 0-9 (traced from
-your reference images where supplied, procedurally generated otherwise),
-plus A-Z duplicated from the lowercase shapes, space, and .notdef."""
+"""Assembles a full UFO font source: one glyph per a-z / 0-9, sourced in
+priority order -- traced from your reference images, then from a base font
+(if configured), then procedurally generated -- plus A-Z (from the base
+font if it has real capitals, otherwise duplicated from the lowercase
+shapes), space, and .notdef."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import ufoLib2
 from shapely.geometry import MultiPolygon, Polygon
@@ -13,11 +15,13 @@ from shapely.geometry.base import BaseGeometry
 from shapely.geometry.polygon import orient
 
 from . import skeletons
+from .basefont import BaseFont
 from .config import FontConfig
-from .glyphbuild import build_skeleton_glyph, build_traced_glyph
+from .glyphbuild import build_basefont_glyph, build_skeleton_glyph, build_traced_glyph
 from .trace import PotraceNotFound
 
 LOWER = "abcdefghijklmnopqrstuvwxyz"
+UPPER = LOWER.upper()
 DIGITS = "0123456789"
 CHARS = list(LOWER + DIGITS)
 
@@ -42,12 +46,56 @@ def _draw_shape(glyph, shape: BaseGeometry) -> None:
             pen.closePath()
 
 
+class _Resolver:
+    """Tries each glyph source in priority order for a character: your
+    reference image, then the base font, recording what happened in
+    `report` and disabling tracing globally the first time potrace turns
+    out to be missing."""
+
+    def __init__(self, cfg: FontConfig, ref_images: Dict[str, Path], base_font: Optional[BaseFont], report: dict):
+        self.cfg = cfg
+        self.ref_images = ref_images
+        self.base_font = base_font
+        self.report = report
+        self.potrace_available = True
+        self.potrace_warned = False
+
+    def resolve(self, char: str) -> Tuple[Optional[BaseGeometry], Optional[float]]:
+        image_path = self.ref_images.get(char)
+        if image_path is not None and self.potrace_available:
+            try:
+                shape, advance = build_traced_glyph(char, image_path, self.cfg)
+                self.report["traced"].append(char)
+                return shape, advance
+            except PotraceNotFound as e:
+                self.potrace_available = False
+                if not self.potrace_warned:
+                    print(f"Warning: {e}\nFalling back to other sources for all remaining reference images.")
+                    self.potrace_warned = True
+            except Exception as e:
+                print(f"Warning: couldn't trace '{char}' from {image_path} ({e}); trying other sources.")
+                self.report["fallback"].append(char)
+
+        if self.base_font is not None and self.base_font.has_char(char):
+            try:
+                shape, advance = build_basefont_glyph(char, self.base_font, self.cfg)
+                self.report["base_font"].append(char)
+                return shape, advance
+            except Exception as e:
+                print(f"Warning: couldn't use the base font's '{char}' glyph ({e}); trying other sources.")
+                if char not in self.report["fallback"]:
+                    self.report["fallback"].append(char)
+
+        return None, None
+
+
 def build_font(cfg: FontConfig, ref_images: Dict[str, Path]) -> Tuple["ufoLib2.Font", dict]:
     """Build the UFO source. `ref_images` maps a single character ('a'..'z',
-    '0'..'9') to the reference image file to trace for it; any character not
-    present is generated procedurally. Returns (font, report) where report
-    lists which characters were traced vs. generated vs. fell back after a
-    tracing error."""
+    '0'..'9') to the reference image file to trace for it. `cfg.base_font`
+    (if set) is used as a second-choice source for any character without a
+    reference image. Anything still uncovered is generated procedurally (or,
+    for A-Z, duplicated from the matching lowercase shape). Returns
+    (font, report) describing which source was used for each character."""
 
     font = ufoLib2.Font()
     info = font.info
@@ -64,31 +112,15 @@ def build_font(cfg: FontConfig, ref_images: Dict[str, Path]) -> Tuple["ufoLib2.F
     if cfg.description:
         info.openTypeNameDescription = cfg.description
 
-    report = {"traced": [], "generated": [], "fallback": []}
+    base_font = BaseFont(cfg.base_font) if cfg.base_font else None
 
-    potrace_available = True
-    potrace_warning_shown = False
+    report = {"traced": [], "base_font": [], "generated": [], "duplicated": [], "fallback": []}
+    resolver = _Resolver(cfg, ref_images, base_font, report)
 
     glyph_order: List[str] = [".notdef", "space"]
 
     for char in CHARS:
-        image_path = ref_images.get(char)
-        shape = None
-        advance = None
-
-        if image_path is not None and potrace_available:
-            try:
-                shape, advance = build_traced_glyph(char, image_path, cfg)
-                report["traced"].append(char)
-            except PotraceNotFound as e:
-                potrace_available = False
-                if not potrace_warning_shown:
-                    print(f"Warning: {e}\nFalling back to generated letterforms for all remaining reference images.")
-                    potrace_warning_shown = True
-            except Exception as e:
-                print(f"Warning: couldn't trace '{char}' from {image_path} ({e}); using a generated letterform instead.")
-                report["fallback"].append(char)
-
+        shape, advance = resolver.resolve(char)
         if shape is None:
             shape, advance = build_skeleton_glyph(char, cfg)
             if char not in report["fallback"]:
@@ -100,15 +132,23 @@ def build_font(cfg: FontConfig, ref_images: Dict[str, Path]) -> Tuple["ufoLib2.F
         _draw_shape(glyph, shape)
         glyph_order.append(char)
 
-    if cfg.uppercase_from_lowercase:
-        for lc in LOWER:
-            uc = lc.upper()
+    for lc in LOWER:
+        uc = lc.upper()
+        shape, advance = resolver.resolve(uc)
+        if shape is not None:
+            glyph = font.newGlyph(uc)
+            glyph.unicodes = [ord(uc)]
+            glyph.width = round(advance)
+            _draw_shape(glyph, shape)
+            glyph_order.append(uc)
+        elif cfg.uppercase_from_lowercase:
             src = font[lc]
             glyph = font.newGlyph(uc)
             glyph.unicodes = [ord(uc)]
             glyph.width = src.width
             src.draw(glyph.getPen())
             glyph_order.append(uc)
+            report["duplicated"].append(uc)
 
     space = font.newGlyph("space")
     space.unicodes = [0x20]

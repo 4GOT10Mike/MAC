@@ -1,0 +1,16 @@
+# Example: reskin an existing font's letterforms with a puffy, rough,
+# hand-carved texture (e.g. matching a game-logo blackletter style).
+#
+# base_font gives real, distinct capitals and lowercase letterforms for all
+# 62 characters instead of the built-in procedural generator -- much closer
+# to a specific existing typeface than a description alone can get.
+# puffiness/roughness then restyle those shapes.
+family_name: "Saints Row Style"
+style_name: "Regular"
+description: "puffy rough blackletter"
+
+base_font: "references/OldEnglishFive.ttf"
+
+puffiness: 20              # outward round expand, in font units -- chunkier strokes
+roughness: 18               # organic edge noise amplitude, in font units
+roughness_wavelength: 140   # spacing of the bumps -- bigger = fewer, chunkier lobes; smaller = fine sawtooth
