@@ -118,19 +118,15 @@ def _densify_ring(coords: Polyline, max_seg_len: float) -> Polyline:
     return pts
 
 
-def _chaikin_smooth(coords: Polyline, iterations: int = 3, ratio: float = 0.25) -> Polyline:
-    """Corner-cutting smoothing on a closed ring: rounds sharp zigzags into
-    soft bumps without changing the overall wave shape."""
-    pts = coords
-    for _ in range(iterations):
-        n = len(pts)
-        new_pts: Polyline = []
-        for i in range(n):
-            p0, p1 = pts[i], pts[(i + 1) % n]
-            new_pts.append((p0[0] + (p1[0] - p0[0]) * ratio, p0[1] + (p1[1] - p0[1]) * ratio))
-            new_pts.append((p0[0] + (p1[0] - p0[0]) * (1 - ratio), p0[1] + (p1[1] - p0[1]) * (1 - ratio)))
-        pts = new_pts
-    return pts
+def _moving_average_smooth(values: List[float], passes: int = 1) -> List[float]:
+    """Light 3-tap smoothing on a closed sequence -- just enough to keep
+    adjacent jitter from being *completely* uncorrelated (which self-
+    intersects constantly), while keeping the result jagged rather than a
+    smooth wave."""
+    n = len(values)
+    for _ in range(passes):
+        values = [(values[(i - 1) % n] + 2 * values[i] + values[(i + 1) % n]) / 4.0 for i in range(n)]
+    return values
 
 
 def _roughen_ring(coords: Polyline, amplitude: float, wavelength: float, seed: int) -> Polyline:
@@ -146,15 +142,12 @@ def _roughen_ring(coords: Polyline, amplitude: float, wavelength: float, seed: i
     if amp <= 0:
         return coords
 
-    dense = _densify_ring(coords, max(wavelength / 4.0, 3.0))
+    dense = _densify_ring(coords, max(wavelength / 3.0, 3.0))
     n = len(dense)
     rng = random.Random(seed)
-    terms = [(rng.uniform(0.6, 1.6), rng.uniform(0, 2 * math.pi), rng.uniform(0.5, 1.0)) for _ in range(3)]
-    weight_sum = sum(w for _, _, w in terms)
-
-    arclen = [0.0]
-    for i in range(1, n):
-        arclen.append(arclen[-1] + math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]))
+    # independent per-point jitter, lightly correlated with its neighbors --
+    # jagged/chipped rather than a smooth periodic wave.
+    jitter = _moving_average_smooth([rng.uniform(-1.0, 1.0) for _ in range(n)], passes=1)
 
     out: Polyline = []
     for i, (x, y) in enumerate(dense):
@@ -163,18 +156,17 @@ def _roughen_ring(coords: Polyline, amplitude: float, wavelength: float, seed: i
         tx, ty = x1 - x0, y1 - y0
         tl = math.hypot(tx, ty) or 1.0
         nx, ny = ty / tl, -tx / tl
-        s = arclen[i] / wavelength
-        noise = sum(w * math.sin(2 * math.pi * freq * s + phase) for freq, phase, w in terms) / weight_sum
-        offset = amp * noise
+        offset = amp * jitter[i]
         out.append((x + nx * offset, y + ny * offset))
-    return _chaikin_smooth(out)
+    return out
 
 
 def roughen(geom, amplitude: float, wavelength: float = 70.0, seed: int = 1):
-    """Perturb a filled shape's contours with smooth, organic noise along
-    their own normal direction -- an uneven, hand-cut/worn edge instead of a
-    clean geometric one. `wavelength` is roughly the spacing (in font units)
-    of the bumps; `amplitude` is roughly how far they push in/out."""
+    """Perturb a filled shape's contours with jagged, irregular jitter along
+    their own normal direction -- a chipped/hand-cut edge, not a smooth wavy
+    one. `wavelength` is roughly the grain size (in font units) of the
+    texture (smaller = finer/tighter jaggedness, larger = coarser, more
+    spread-out chips); `amplitude` is roughly how far it pushes in/out."""
     if amplitude == 0 or geom.is_empty:
         return geom
 

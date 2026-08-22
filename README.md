@@ -127,9 +127,8 @@ set.
   the given font file (`fontgen/basefont.py`, via `fontTools`), scaled to
   match your font's units-per-em. `puffiness` expands it outward with
   rounded joins (chunkier strokes); `roughness` perturbs its contours with
-  smooth, seeded noise along their normal direction and rounds the result
-  with Chaikin corner-cutting (`fontgen/geometry.py`'s `roughen`) for an
-  organic, hand-cut/worn edge instead of a clean vector one.
+  jagged, seeded jitter along their normal direction (`fontgen/geometry.py`'s
+  `roughen`) for a chipped, hand-cut/worn edge instead of a clean vector one.
 - All three paths produce plain polygon outlines, which are assembled into
   a UFO font source (`fontgen/ufobuild.py`, via [ufoLib2](https://github.com/fonttools/ufoLib2))
   and compiled to `.ttf` with [ufo2ft](https://github.com/fonttools/ufo2ft) /
