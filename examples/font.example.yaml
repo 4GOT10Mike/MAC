@@ -1,0 +1,21 @@
+# Example font.yaml -- copy to your project root (or wherever you run
+# `python -m fontgen build --config ...` from) and edit.
+#
+# Font identity
+family_name: "My Handwriting"
+style_name: "Regular"
+
+# Free-text style description. Keywords like bold/thin/light/heavy,
+# italic/slanted/cursive/handwritten, sharp/angular/geometric/rounded,
+# and condensed/wide/expanded are picked up automatically to steer any
+# letters you did NOT supply a reference image for (see refs/). Explicit
+# settings below always take precedence over these keyword guesses.
+description: "casual marker lettering, a little bold, slightly rounded"
+
+# --- Explicit overrides (optional; delete a line to let 'description' decide) ---
+# stroke_width: 65        # thickness of generated (non-traced) strokes, in font units (1000/em)
+# slant: 0                # degrees, positive leans right (italic-style)
+# round_joins: true        # rounded vs sharp corners on generated strokes
+# letter_spacing: 40       # extra side bearing added to every glyph
+# weight_delta: 0          # grow(+)/shrink(-) TRACED glyphs, in font units
+# uppercase_from_lowercase: true   # A-Z reuse the a-z shapes (recommended for casual/handwriting fonts)
